@@ -2,8 +2,11 @@ package dashboards
 
 import (
 	"context"
+	"crypto/md5"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -167,6 +170,21 @@ func (fr *fileReader) saveDashboard(path string, folderId int64, fileInfo os.Fil
 		return provisioningMetadata, nil
 	}
 
+	//TODO: clean up this code /CARL
+	rawDashboard, err := dash.Dashboard.Data.MarshalJSON()
+	if err != nil {
+		return provisioningMetadata, err
+	}
+
+	checkSum, err := checkSum(strings.NewReader(string(rawDashboard)))
+	if err != nil {
+		return provisioningMetadata, err
+	}
+
+	if provisionedData != nil && checkSum == provisionedData.CheckSum {
+		upToDate = true
+	}
+
 	// keeps track of what uid's and title's we have already provisioned
 	provisioningMetadata.uid = dash.Dashboard.Uid
 	provisioningMetadata.title = dash.Dashboard.Title
@@ -185,9 +203,26 @@ func (fr *fileReader) saveDashboard(path string, folderId int64, fileInfo os.Fil
 	}
 
 	fr.log.Debug("saving new dashboard", "file", path)
-	dp := &models.DashboardProvisioning{ExternalId: path, Name: fr.Cfg.Name, Updated: resolvedFileInfo.ModTime().Unix()}
+	dp := &models.DashboardProvisioning{
+		ExternalId: path,
+		Name:       fr.Cfg.Name,
+		Updated:    resolvedFileInfo.ModTime().Unix(),
+		CheckSum:   checkSum,
+	}
 	_, err = fr.dashboardService.SaveProvisionedDashboard(dash, dp)
 	return provisioningMetadata, err
+}
+
+func checkSum(reader io.Reader) (string, error) {
+	//TODO: clean up this code /CARL
+	var returnMD5String string
+	hash := md5.New()
+	if _, err := io.Copy(hash, reader); err != nil {
+		return returnMD5String, err
+	}
+	hashInBytes := hash.Sum(nil)[:16]
+	returnMD5String = hex.EncodeToString(hashInBytes)
+	return returnMD5String, nil
 }
 
 func getProvisionedDashboardByPath(service dashboards.DashboardProvisioningService, name string) (map[string]*models.DashboardProvisioning, error) {
